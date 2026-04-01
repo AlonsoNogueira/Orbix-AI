@@ -13,7 +13,7 @@ export async function askGroq(messages: Message[]) {
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant", // Corrigido: era llama, não llhama
+        model: "llama-3.1-8b-instant",
         max_tokens: 1000,
         temperature: 0.7,
         messages,
