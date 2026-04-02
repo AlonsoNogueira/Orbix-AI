@@ -12,7 +12,7 @@ function timingSafeEqualString(a: string, b: string): boolean {
 }
 
 function verifySignature(rawBody: string, headers: IncomingHttpHeaders): boolean {
-  const secret = process.env.ABACATE_PAY_KEY;
+  const secret = process.env.ABACATE_WEBHOOK_SECRET;
   if (!secret) {
     throw new ValidationError("ABACATE_WEBHOOK_SECRET não configurado");
   }
