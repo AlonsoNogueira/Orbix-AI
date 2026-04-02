@@ -4,46 +4,61 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.chatService = chatService;
+const credit_service_1 = require("../credits/credit-service");
 const prisma_1 = __importDefault(require("../../utils/prisma"));
 const groq_service_1 = require("../groq/groq-service");
+const errors_1 = require("../../utils/errors");
+const client_1 = require("@prisma/client");
 async function chatService(message, userId) {
-    // 1. Buscar histórico ANTES de salvar a nova mensagem pra não ter duplicata no contexto
+    const user = await prisma_1.default.user.findUnique({
+        where: { id: userId },
+    });
+    if (!user) {
+        throw new errors_1.AuthenticationError("Usuário não encontrado");
+    }
+    await (0, credit_service_1.ensureHasCredits)(userId);
     const historico = await prisma_1.default.mensagem.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
         take: 10,
     });
-    // 2. Inverter para ordem cronológica e mapear para o formato do Groq com roles corretas
     const messagesPrevious = historico.reverse().map((msg) => ({
-        role: msg.author.toString().toUpperCase() === "USER" ? "user" : "assistant",
+        role: msg.author.toString().toUpperCase() === "USER"
+            ? "user"
+            : "assistant",
         content: msg.content,
     }));
-    // 3. Montar o payload final com System Prompt, Histórico e a Pergunta Atual por último
     const messages = [
         {
             role: "system",
-            content: "Você é o OrbixAI, um assistente virtual inteligente e prestativo. Sua prioridade é responder de forma coerente ao que o usuário perguntou agora, levando em conta o histórico da conversa se for relevante. Nunca repita respostas vazias ou fora de contexto."
+            content: "Você é o OrbixAI, um assistente virtual inteligente e prestativo. Sua prioridade é responder de forma coerente ao que o usuário perguntou agora, levando em conta o histórico da conversa se for relevante. Nunca repita respostas vazias ou fora de contexto.",
         },
         ...messagesPrevious,
         { role: "user", content: message },
     ];
-    // 4. Salvar a mensagem atual do usuário no banco
     await prisma_1.default.mensagem.create({
         data: {
             content: message,
             userId,
-            author: "USER"
-        }
+            author: client_1.AuthorType.USER,
+        },
     });
-    // 5. Enviar para o Groq
     const response = await (0, groq_service_1.askGroq)(messages);
-    // 6. Salvar a resposta do assistente no banco
-    await prisma_1.default.mensagem.create({
-        data: {
-            content: response,
-            userId,
-            author: "ASSISTANT"
+    await prisma_1.default.$transaction(async (tx) => {
+        const updated = await tx.user.updateMany({
+            where: { id: userId, credit: { gte: 1 } },
+            data: { credit: { decrement: 1 } },
+        });
+        if (updated.count !== 1) {
+            throw new errors_1.BadRequestError("Créditos insuficientes");
         }
+        await tx.mensagem.create({
+            data: {
+                content: response,
+                userId,
+                author: client_1.AuthorType.ASSISTANT,
+            },
+        });
     });
     return response;
 }

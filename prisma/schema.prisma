@@ -11,19 +11,32 @@ enum Role {
   ADMIN
 }
 
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  password  String
+enum PaymentType {
+  CREDIT
+  DEBIT
+}
 
-  role      Role     @default(USER)
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+model User {
+  id       String  @id @default(uuid())
+  email    String  @unique
+  credit   Int     @default(3)
+  name     String?
+  password String
+
+  role Role @default(USER)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   mensagens Mensagem[]
 
+  payments payment[]
 }
 
 enum AuthorType {
@@ -32,12 +45,27 @@ enum AuthorType {
 }
 
 model Mensagem {
-  id        String   @id @default(uuid())
-  content  String
+  id        String     @id @default(uuid())
+  content   String
   author    AuthorType
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+}
+
+model payment {
+  id     String        @id @default(uuid())
+  externalId String @unique
+  amount Int
+  type   PaymentType
+  status PaymentStatus
+  credit_amount Int
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User     @relation(fields: [userId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
   userId String
 }
