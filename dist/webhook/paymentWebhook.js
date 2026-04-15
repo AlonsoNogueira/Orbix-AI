@@ -7,147 +7,83 @@ exports.handlePaymentWebhook = handlePaymentWebhook;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const errors_1 = require("../utils/errors");
 const prisma_1 = __importDefault(require("../utils/prisma"));
-function timingSafeEqualString(a, b) {
-    const ba = Buffer.from(a, "utf8");
-    const bb = Buffer.from(b, "utf8");
-    if (ba.length !== bb.length)
-        return false;
-    return node_crypto_1.default.timingSafeEqual(ba, bb);
-}
+const payment_service_1 = require("../modules/payment/payment-service");
+// ─── Verificação HMAC (X-Webhook-Signature) ─────────────────────────────────
+// A AbacatePay assina o rawBody com HMAC-SHA256 usando a chave pública fixa
+// e inclui a assinatura base64 no header X-Webhook-Signature.
+// Ref: https://docs.abacatepay.com/pages/webhooks
+const ABACATEPAY_PUBLIC_KEY = "t9dXRhHHo3yDEj5pVDYz0frf7q6bMKyMRmxxCPIPp3RCplBfXRxqlC6ZpiWmOqj4L63qEaeUOtrCI8P0VMUgo6iIga2ri9ogaHFs0WIIywSMg0q7RmBfybe1E5XJcfC4IW3alNqym0tXoAKkzvfEjZxV6bE0oG2zJrNNYmUCKZyV0KZ3JS8Votf9EAWWYdiDkMkpbMdPggfh1EqHlVkMiTady6jOR3hyzGEHrIz2Ret0xHKMbiqkr9HS1JhNHDX9";
 function verifySignature(rawBody, headers) {
-    const secret = process.env.ABACATE_PAY_KEY;
-    if (!secret) {
-        throw new errors_1.ValidationError("ABACATE_WEBHOOK_SECRET não configurado");
+    const signature = headers["x-webhook-signature"];
+    if (!signature) {
+        throw new errors_1.ValidationError("Header X-Webhook-Signature ausente");
     }
-    const sigHeader = headers["x-webhook-signature"] ||
-        headers["x-signature"];
-    if (!sigHeader) {
-        return false;
-    }
-    const expectedB64 = node_crypto_1.default
-        .createHmac("sha256", secret)
+    const expected = node_crypto_1.default
+        .createHmac("sha256", ABACATEPAY_PUBLIC_KEY)
         .update(rawBody, "utf8")
         .digest("base64");
-    if (timingSafeEqualString(sigHeader.trim(), expectedB64)) {
-        return true;
+    const sigBuf = Buffer.from(signature.trim(), "utf8");
+    const expectedBuf = Buffer.from(expected, "utf8");
+    if (sigBuf.length !== expectedBuf.length ||
+        !node_crypto_1.default.timingSafeEqual(sigBuf, expectedBuf)) {
+        throw new errors_1.ValidationError("Assinatura do webhook inválida");
     }
-    const expectedHex = node_crypto_1.default
-        .createHmac("sha256", secret)
-        .update(rawBody, "utf8")
-        .digest("hex");
-    return timingSafeEqualString(sigHeader.trim().toLowerCase(), expectedHex);
+}
+function parseCreditPayload(body) {
+    // Ignora eventos que não sejam checkout.completed
+    if (body.event !== "checkout.completed")
+        return null;
+    const data = body.data;
+    const checkout = data?.checkout;
+    if (!checkout)
+        return null;
+    // Só processa se o status for PAID
+    if (String(checkout.status).toUpperCase() !== "PAID")
+        return null;
+    // userId vem sempre do metadata — externalId agora é `${userId}-${timestamp}`
+    const metadata = checkout.metadata;
+    const userId = metadata?.userId ?? "";
+    if (!userId) {
+        console.warn("[Webhook] userId não encontrado no payload:", JSON.stringify(checkout).slice(0, 200));
+        return null;
+    }
+    const externalPaymentId = String(checkout.id ?? "").trim();
+    if (!externalPaymentId)
+        return null;
+    const amountCents = Number(checkout.paidAmount ?? checkout.amount ?? 0);
+    if (amountCents < 100)
+        return null;
+    return { externalPaymentId, amountCents, userId };
 }
 function isUuid(s) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
-function metadataUserId(obj) {
-    if (!obj)
-        return undefined;
-    const m = obj.metadata;
-    if (m && typeof m === "object" && m !== null && "userId" in m) {
-        const u = m.userId;
-        if (typeof u === "string" && u.trim().length > 0)
-            return u.trim();
-    }
-    return undefined;
-}
-function parseCreditPayload(body) {
-    const rootMeta = metadataUserId(body);
-    if (body.apiVersion === 2 && typeof body.event === "string") {
-        const event = body.event;
-        const data = body.data;
-        if (!data)
-            return null;
-        const dataMeta = metadataUserId(data);
-        const userFromMeta = rootMeta || dataMeta;
-        if (event === "checkout.completed") {
-            const checkout = data.checkout;
-            if (!checkout || String(checkout.status) !== "PAID")
-                return null;
-            const ext = checkout.externalId != null && checkout.externalId !== ""
-                ? String(checkout.externalId)
-                : "";
-            const userId = userFromMeta || (isUuid(ext) ? ext : undefined);
-            if (!userId)
-                return null;
-            return {
-                externalPaymentId: String(checkout.id),
-                amountCents: Number(checkout.paidAmount ?? checkout.amount),
-                userId,
-            };
-        }
-        if (event === "transparent.completed") {
-            const transparent = data.transparent;
-            if (!transparent || String(transparent.status) !== "PAID")
-                return null;
-            const ext = transparent.externalId != null && transparent.externalId !== ""
-                ? String(transparent.externalId)
-                : "";
-            const userId = userFromMeta || (isUuid(ext) ? ext : undefined);
-            if (!userId)
-                return null;
-            return {
-                externalPaymentId: String(transparent.id),
-                amountCents: Number(transparent.paidAmount ?? transparent.amount),
-                userId,
-            };
-        }
-        return null;
-    }
-    const id = body.id;
-    const status = body.status;
-    const amount = body.amount;
-    const meta = body.metadata;
-    if (typeof id !== "string")
-        return null;
-    const st = typeof status === "string" ? status.toLowerCase() : "";
-    if (st !== "paid")
-        return null;
-    const userId = meta?.userId || rootMeta;
-    if (!userId)
-        return null;
-    return {
-        externalPaymentId: id,
-        amountCents: Number(amount),
-        userId,
-    };
-}
-async function handlePaymentWebhook(rawBody, headers, query) {
-    const querySecret = process.env.WEBHOOK_QUERY_SECRET;
-    if (querySecret) {
-        const q = query.webhookSecret;
-        const received = typeof q === "string" ? q : Array.isArray(q) ? q[0] : undefined;
-        if (received !== querySecret) {
-            throw new errors_1.ValidationError("Webhook query secret inválido");
-        }
-    }
-    if (!verifySignature(rawBody, headers)) {
-        throw new errors_1.ValidationError("Assinatura inválida");
-    }
+// ─── Handler principal ────────────────────────────────────────────────────────
+async function handlePaymentWebhook(rawBody, headers, _query) {
+    verifySignature(rawBody, headers);
     let body;
     try {
         body = JSON.parse(rawBody);
     }
     catch {
-        throw new errors_1.ValidationError("JSON inválido");
+        throw new errors_1.ValidationError("Corpo do webhook não é JSON válido");
     }
+    console.log(`[Webhook] Evento: ${body.event} | apiVersion: ${body.apiVersion}`);
     const parsed = parseCreditPayload(body);
-    if (!parsed) {
-        return;
-    }
+    if (!parsed)
+        return; // evento ignorado (ex: checkout.disputed)
     const { externalPaymentId, amountCents, userId } = parsed;
-    const user = await prisma_1.default.user.findUnique({ where: { id: userId } });
-    if (!user) {
-        throw new errors_1.ValidationError("Usuário não encontrado para este pagamento");
-    }
-    const existingPayment = await prisma_1.default.payment.findUnique({
-        where: { externalId: externalPaymentId },
-    });
-    if (existingPayment) {
+    // Idempotência: não processa o mesmo pagamento duas vezes
+    const existing = await prisma_1.default.payment.findUnique({ where: { externalId: externalPaymentId } });
+    if (existing) {
+        console.log(`[Webhook] Pagamento já processado: ${externalPaymentId}`);
         return;
     }
-    const amountInReais = amountCents / 100;
-    const credits = Math.floor(amountInReais * 5);
+    const user = await prisma_1.default.user.findUnique({ where: { id: userId } });
+    if (!user)
+        throw new errors_1.ValidationError(`Usuário não encontrado: ${userId}`);
+    const credits = (0, payment_service_1.calcCredits)(amountCents);
+    console.log(`[Webhook] +${credits} créditos → ${user.email} (R$ ${(amountCents / 100).toFixed(2)})`);
     await prisma_1.default.$transaction([
         prisma_1.default.payment.create({
             data: {
@@ -161,10 +97,9 @@ async function handlePaymentWebhook(rawBody, headers, query) {
         }),
         prisma_1.default.user.update({
             where: { id: userId },
-            data: {
-                credit: { increment: credits },
-            },
+            data: { credit: { increment: credits } },
         }),
     ]);
+    console.log(`[Webhook] ✅ Concluído: ${credits} créditos adicionados para ${user.email}`);
 }
 //# sourceMappingURL=paymentWebhook.js.map

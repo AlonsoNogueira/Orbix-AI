@@ -3,6 +3,8 @@ export declare function findUserByEmail(email: string, includePassword: boolean)
     email: string;
     credit: number;
     name: string | null;
+    cellphone: string;
+    taxId: string;
     password: string;
     role: import("@prisma/client").$Enums.Role;
     createdAt: Date;
@@ -13,6 +15,8 @@ export declare function findUserById(userId: string, includePassword: boolean): 
     email: string;
     credit: number;
     name: string | null;
+    cellphone: string;
+    taxId: string;
     password: string;
     role: import("@prisma/client").$Enums.Role;
     createdAt: Date;
@@ -23,6 +27,8 @@ export declare function findAll(includePassword: boolean): Promise<{
     email: string;
     credit: number;
     name: string | null;
+    cellphone: string;
+    taxId: string;
     password: string;
     role: import("@prisma/client").$Enums.Role;
     createdAt: Date;

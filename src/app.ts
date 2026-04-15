@@ -10,7 +10,7 @@ app.use(cors());
 
 app.use(
   "/api/webhook",
-  express.raw({ type: "application/json" }),
+  express.raw({ type: "*/*" }),
   webhookRoutes,
 );
 

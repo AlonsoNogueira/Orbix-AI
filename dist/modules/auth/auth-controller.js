@@ -10,7 +10,7 @@ async function loginController(request, response, next) {
     try {
         const data = loginSchema_1.loginSchema.parse(request.body);
         const result = await (0, auth_service_1.login)(data.email, data.password);
-        (0, sucess_1.sendSuccessResponse)(response, "Login successful", result);
+        (0, sucess_1.sendSuccessResponse)(response, "Login realizado com sucesso", result);
     }
     catch (error) {
         next(error);
@@ -19,8 +19,8 @@ async function loginController(request, response, next) {
 async function registerController(request, response, next) {
     try {
         const data = registerSchema_1.registerSchema.parse(request.body);
-        const result = await (0, auth_service_1.register)(data.email, data.password, data.name);
-        (0, sucess_1.sendSuccessResponse)(response, "User registered successfully", result);
+        const result = await (0, auth_service_1.register)(data.email, data.password, data.name, data.cellphone);
+        (0, sucess_1.sendSuccessResponse)(response, "Usuário registrado com sucesso", result);
     }
     catch (error) {
         next(error);

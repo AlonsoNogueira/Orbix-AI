@@ -1,6 +1,6 @@
 export declare function login(email: string, password: string): Promise<{
     token: string;
 }>;
-export declare function register(email: string, password: string, name: string): Promise<{
+export declare function register(email: string, password: string, name: string, cellphone: string): Promise<{
     token: string;
 }>;

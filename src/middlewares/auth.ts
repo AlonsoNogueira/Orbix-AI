@@ -25,7 +25,7 @@ export function authenticate(req: ExtendedRequest, res: Response, next: NextFunc
         next(error);
     }
 }
-
+ 
 export async function roleMiddleware(role: string) {
     return async (req: ExtendedRequest, res: Response, next: NextFunction) => {
         if (!req.userId) {
